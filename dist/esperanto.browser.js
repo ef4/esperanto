@@ -1,5 +1,5 @@
 /*
-	esperanto.js v0.6.6 - 2015-01-28
+	esperanto.js v0.6.7 - 2015-02-03
 	http://esperantojs.org
 
 	Released under the MIT License.
@@ -442,25 +442,6 @@
 		return unscoped;
 	}
 
-	/**
-	 * Reorders an array of imports so that empty imports (those with
-	   no specifier, e.g. `import 'polyfills'`) are at the end. That
-	   way they can be excluded from the factory function's arguments
-	 * @param {array} imports - the imports to reorder
-	 */
-	function reorderImports ( imports ) {
-		var i = imports.length, x;
-
-		while ( i-- ) {
-			x = imports[i];
-
-			if ( x.isEmpty ) {
-				imports.splice( i, 1 );
-				imports.push( x );
-			}
-		}
-	}
-
 	var reserved = 'break case class catch const continue debugger default delete do else export extends finally for function if import in instanceof let new return super switch this throw try typeof var void while with yield'.split( ' ' );
 
 	/**
@@ -553,7 +534,6 @@
 
 		imports = ($D$0 = findImportsAndExports( mod, options.source, mod.ast ))[0], exports = $D$0[1], $D$0;
 
-		reorderImports( imports );
 
 		mod.imports = imports;
 		mod.exports = exports;
@@ -750,7 +730,11 @@
 	}
 
 	function globalify ( name ) {
-		return 'global.' + name;
+	  	if ( /^__dep\d+__$/.test( name ) ) {
+			return 'undefined';
+		} else {
+			return 'global.' + name;
+		}
 	}
 
 	var amd__introTemplate = template( 'define(<%= amdName %><%= paths %>function (<%= names %>) {\n\n' );
@@ -759,7 +743,8 @@
 		var seen = {},
 			importNames = [],
 			importPaths = [],
-			intro;
+			intro,
+			placeholders = 0;
 
 		// gather imports, and remove import declarations
 		mod.imports.forEach( function(x ) {
@@ -769,7 +754,13 @@
 				importPaths.push( path );
 
 				if ( x.name ) {
+					while ( placeholders ) {
+						importNames.push( '__dep' + importNames.length + '__' );
+						placeholders--;
+					}
 					importNames.push( x.name );
+				} else {
+					placeholders++;
 				}
 
 				seen[ path ] = true;
@@ -914,6 +905,7 @@
 		var importNames = [];
 		var importPaths = [];
 		var seen = {};
+		var placeholders = 0;
 
 		requireName( options );
 
@@ -932,7 +924,13 @@
 					importPaths.push( x.path );
 
 					if ( x.name ) {
+						while ( placeholders ) {
+							importNames.push( '__dep' + importNames.length + '__' );
+							placeholders--;
+						}
 						importNames.push( x.name );
+					} else {
+						placeholders++;
 					}
 
 					seen[ x.path ] = true;
@@ -1274,7 +1272,11 @@
 
 			if ( chains.hasOwnProperty( name ) ) {
 				// special case - a binding from another module
-				earlyExports.push( (("Object.defineProperty(exports, '" + exportAs) + ("', { enumerable: true, get: function () { return " + (chains[name])) + "; }});") );
+				if ( !options._evilES3SafeReExports ) {
+					earlyExports.push( (("Object.defineProperty(exports, '" + exportAs) + ("', { enumerable: true, get: function () { return " + (chains[name])) + "; }});") );
+				} else {
+					lateExports.push( (("exports." + exportAs) + (" = " + (chains[name])) + ";") );
+				}
 			} else if ( ~mod.ast._topLevelFunctionNames.indexOf( name ) ) {
 				// functions should be exported early, in
 				// case of cyclic dependencies
@@ -1308,14 +1310,20 @@
 	}
 
 	function getImportSummary ( mod ) {
-		var importPaths = [], importNames = [], seen = {};
+		var importPaths = [], importNames = [], seen = {}, placeholders = 0;
 
 		mod.imports.forEach( function(x ) {
 			if ( !hasOwnProp.call( seen, x.path ) ) {
 				importPaths.push( x.path );
 
-				if ( x.specifiers.length ) { // don't add empty imports
+				if ( x.specifiers.length ) {
+					while ( placeholders ) {
+						importNames.push( '__dep' + importNames.length + '__' );
+						placeholders--;
+					}
 					importNames.push( mod.getName( x ) );
+				} else {
+					placeholders++;
 				}
 
 				seen[ x.path ] = true;
@@ -1349,7 +1357,8 @@
 
 		transformBody( mod, body, {
 			intro: intro,
-			outro: '\n\n});'
+			outro: '\n\n});',
+			_evilES3SafeReExports: options._evilES3SafeReExports
 		});
 
 		return packageResult( body, options, 'toAmd' );
@@ -1378,6 +1387,7 @@
 
 		transformBody( mod, body, {
 			header: importBlock,
+			_evilES3SafeReExports: options._evilES3SafeReExports
 		});
 
 		body.prepend( "'use strict';\n\n" ).trimLines();
@@ -1447,7 +1457,8 @@
 
 		transformBody( mod, body, {
 			intro: intro,
-			outro: '\n\n}));'
+			outro: '\n\n}));',
+			_evilES3SafeReExports: options._evilES3SafeReExports
 		});
 
 		return packageResult( body, options, 'toUmd' );
